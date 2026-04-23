@@ -1,0 +1,75 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, assigned, unassigned, labeled, unlabeled]
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  check-checklist:
+    name: PR checklist completed
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all checklist items are ticked
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if echo "$BODY" | grep -qE '^\s*- \[ \]'; then
+            echo "::error::All checklist items must be checked before requesting a review."
+            exit 1
+          fi
+          echo "All checklist items are checked."
+
+  check-author-assigned:
+    name: PR author is assigned
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check author is in assignees
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          ASSIGNEES: ${{ toJson(github.event.pull_request.assignees) }}
+        run: |
+          if echo "$ASSIGNEES" | jq -e --arg author "$AUTHOR" '[.[].login] | contains([$author])' > /dev/null; then
+            echo "PR author ($AUTHOR) is in the assignees list."
+          else
+            echo "::error::PR author ($AUTHOR) must be assigned to the pull request."
+            exit 1
+          fi
+
+  check-label:
+    name: PR has at least one label
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check at least one label is set
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          count=$(echo "$LABELS" | jq 'length')
+          if [ "$count" -gt 0 ]; then
+            echo "PR has $count label(s)."
+          else
+            echo "::error::At least one label must be set on the pull request."
+            exit 1
+          fi
+
+  check-changelog:
+    name: CHANGELOG.md updated
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check CHANGELOG.md is modified
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+
+          if git diff --name-only "$BASE" "$HEAD" | grep -q '^CHANGELOG\.md$'; then
+            echo "CHANGELOG.md has been updated."
+          else
+            echo "::error::CHANGELOG.md must be updated in this pull request."
+            exit 1
+          fi
